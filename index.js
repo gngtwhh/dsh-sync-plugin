@@ -8,7 +8,7 @@
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { resolveConfig, SyncEngine } from './lib/engine.js'
+import { AUTO_MODES, SCOPES, resolveConfig, SyncEngine } from './lib/engine.js'
 import { writeAtomic } from './lib/store.js'
 
 export const name = 'dsh-sync'
@@ -54,15 +54,18 @@ function statusText(status) {
   if (!status || typeof status !== 'object') return '（无同步状态）'
   const target = status.target ?? {}
   const local = status.local ?? {}
+  const auto = status.autoSync ?? { mode: 'off' }
   const lines = []
   lines.push(`目标：${target.kind === 'git' ? 'Git 远端' : '共享目录'} ${target.description ?? '（未配置）'}`)
   if (target.branch) lines.push(`分支：${target.branch}`)
+  lines.push(`层级：${status.scopeLabel ?? status.scope ?? '未知'}`)
+  lines.push(`自动同步：${AUTO_TEXT[auto.mode] ?? auto.mode}${auto.mode === 'off' ? '' : `（${auto.minutes} 分钟）`}`)
   lines.push(
-    `本机：${local.sessions ?? 0} 个会话，${local.files ?? 0} 个文件，${local.bytesText ?? '0 B'}`,
+    `本机：${local.sessions ?? 0} 个会话，${local.workspaceFiles ?? 0} 个工作区文件，共 ${local.bytesText ?? '0 B'}`,
   )
   if (status.remote) {
     lines.push(
-      `远端：${status.remote.sessions ?? '?'} 个会话，${status.remote.files ?? '?'} 个文件，${status.remote.bytesText ?? '?'}` +
+      `远端：${status.remote.sessions ?? '?'} 个会话，${status.remote.workspaceFiles ?? '?'} 个工作区文件，${status.remote.bytesText ?? '?'}` +
         (status.remote.updatedAt ? `，更新于 ${status.remote.updatedAt}` : ''),
     )
   }
@@ -73,6 +76,13 @@ function statusText(status) {
   if (status.lastError) lines.push(`上次错误：${status.lastError}`)
   for (const warning of status.warnings ?? []) lines.push(`提示：${warning}`)
   return lines.join('\n')
+}
+
+const AUTO_TEXT = {
+  off: '关闭',
+  interval: '定时',
+  idle: '空闲后',
+  startup: '启动时一次',
 }
 
 /** 设置页使用的 JSON 响应。 */
@@ -148,28 +158,40 @@ export function apply(ctx, config) {
   const log = (...args) => ctx.logger?.info?.('[dsh-sync]', ...args)
 
   const configure = async (payload) => {
-    const kind = payload.kind === 'directory' ? 'directory' : 'git'
-    const target = {}
-    if (kind === 'git') {
-      const remote = typeof payload.remote === 'string' ? payload.remote.trim() : ''
-      if (!remote) throw new Error('请填写 Git 远端地址，例如 git@github.com:you/dsh-sync.git')
-      target.kind = 'git'
-      target.remote = remote
-      target.branch = typeof payload.branch === 'string' && payload.branch.trim() ? payload.branch.trim() : 'main'
-    } else {
-      const dir = typeof payload.path === 'string' ? payload.path.trim() : ''
-      if (!dir) throw new Error('请填写共享目录路径，例如 C:\\Users\\you\\OneDrive\\dsh-sync')
-      target.kind = 'directory'
-      target.path = dir
+    const current = readOverrides()
+    const target = { ...(current.target ?? {}) }
+    if (payload.kind !== undefined) {
+      const kind = payload.kind === 'directory' ? 'directory' : 'git'
+      if (kind === 'git') {
+        const remote = typeof payload.remote === 'string' ? payload.remote.trim() : ''
+        if (!remote) throw new Error('请填写 Git 远端地址，例如 git@github.com:you/dsh-sync.git')
+        target.kind = 'git'
+        target.remote = remote
+        target.branch = typeof payload.branch === 'string' && payload.branch.trim() ? payload.branch.trim() : 'main'
+        target.path = ''
+      } else {
+        const dir = typeof payload.path === 'string' ? payload.path.trim() : ''
+        if (!dir) throw new Error('请填写共享目录路径，例如 C:\\Users\\you\\OneDrive\\dsh-sync')
+        target.kind = 'directory'
+        target.path = dir
+      }
     }
-    const next = {
-      ...readOverrides(),
-      target: { ...(readOverrides().target ?? {}), ...target },
+    const next = { ...current, target }
+    if (payload.scope !== undefined) {
+      if (!SCOPES.includes(payload.scope)) throw new Error(`未知同步层级：${payload.scope}`)
+      next.scope = payload.scope
     }
-    if (payload.autosyncMinutes !== undefined) {
-      const minutes = Number(payload.autosyncMinutes)
-      next.autosyncMinutes = Number.isFinite(minutes) ? Math.max(0, minutes) : 0
+    if (payload.autoMode !== undefined || payload.autoMinutes !== undefined) {
+      const auto = current.autoSync ?? {}
+      const mode = payload.autoMode !== undefined ? payload.autoMode : (auto.mode ?? 'off')
+      if (!AUTO_MODES.includes(mode)) throw new Error(`未知自动同步策略：${mode}`)
+      const minutes = Number(payload.autoMinutes ?? auto.minutes ?? 15)
+      next.autoSync = {
+        mode,
+        minutes: Number.isFinite(minutes) ? Math.min(1440, Math.max(1, Math.round(minutes))) : 15,
+      }
     }
+    if (Array.isArray(payload.ignore)) next.ignore = payload.ignore
     await writeAtomic(settingsFile, `${JSON.stringify(next, null, 2)}\n`)
     syncConfig()
     return engine.status()
@@ -278,7 +300,7 @@ export function apply(ctx, config) {
       ctx.tools.register(
         tool(
           'sync_configure',
-          '配置同步目标：kind=git 时填 remote（如 git@github.com:you/dsh-sync.git，可选 branch）；kind=directory 时填 path（如已用 Syncthing/OneDrive 同步的目录）。保存后立即生效。',
+          '配置同步：kind=git|directory 设目标；scope 设同步层级（sessions 仅会话历史、workspace 会话+工作区文件、full 全部）；autoMode 设自动同步策略（off/interval/idle/startup），autoMinutes 设间隔。只传需要修改的字段，保存后立即生效。',
           {
             type: 'object',
             properties: {
@@ -286,8 +308,19 @@ export function apply(ctx, config) {
               remote: { type: 'string', description: 'Git 远端地址（kind=git 时必填）' },
               branch: { type: 'string', description: 'Git 分支，默认 main' },
               path: { type: 'string', description: '共享目录绝对路径（kind=directory 时必填）' },
+              scope: {
+                type: 'string',
+                enum: ['sessions', 'workspace', 'full'],
+                description: '同步层级：sessions=仅会话历史（含工作区登记）；workspace=再加工作区目录文件；full=再加附件与设置',
+              },
+              autoMode: {
+                type: 'string',
+                enum: ['off', 'interval', 'idle', 'startup'],
+                description: '自动同步：off 关闭；interval 每 N 分钟；idle 会话安静 N 分钟后；startup 启动时一次',
+              },
+              autoMinutes: { type: 'number', description: '自动同步的分钟数（1–1440，默认 15）' },
             },
-            required: ['kind'],
+            required: [],
           },
           async (args) => {
             const data = await run('configure', args)
@@ -312,31 +345,68 @@ export function apply(ctx, config) {
     )
   })
 
-  // 可选：后台定时双向同步。每分钟检查一次，是否到点由当前配置决定，
-  // 因此在设置页改动能立即生效，不需要重启。
+  // 自动同步策略：off / interval / idle / startup。
+  // 每 30 秒检查一次策略，规则变化立即生效，不需要重启。
   ctx.inject(['timer'], (scope) => {
     scope.effect(() => {
       let running = false
       let lastAttempt = 0
-      return scope.interval(async () => {
-        const cfg = syncConfig()
-        if (cfg.autosyncMinutes <= 0) return
-        if (Date.now() - lastAttempt < cfg.autosyncMinutes * 60_000 - 5_000) return
+      let lastFingerprint = ''
+      let activeAt = Date.now()
+      let startupDone = false
+
+      const autoRun = async (reason) => {
         if (running) return
         running = true
         lastAttempt = Date.now()
         try {
           await flushSessions(ctx)
           const result = await engine.sync({ mode: 'push' })
-          log('autosync', result.pushed.files, 'pushed,', result.pulled.files, 'pulled')
+          log('autosync', reason, result.pushed.files, 'pushed,', result.pulled.files, 'pulled')
         } catch (error) {
           const message = String((error && error.message) || error)
           log('autosync failed:', message)
           await engine.writeState({ lastError: message }).catch(() => {})
         } finally {
           running = false
+          lastAttempt = Date.now()
         }
-      }, 60_000)
+      }
+
+      const tick = async () => {
+        const cfg = syncConfig()
+        const auto = cfg.autoSync
+        if (auto.mode === 'off') return
+        const now = Date.now()
+        if (auto.mode === 'startup') {
+          if (startupDone) return
+          startupDone = true
+          await autoRun('startup')
+          return
+        }
+        if (auto.mode === 'interval') {
+          if (now - lastAttempt < Math.max(60_000, auto.minutes * 60_000)) return
+          await autoRun('interval')
+          return
+        }
+        // idle：会话目录没有新活动，且安静了 N 分钟才同步
+        const fingerprint = await engine.activityFingerprint()
+        if (fingerprint !== lastFingerprint) {
+          lastFingerprint = fingerprint
+          activeAt = now
+          return
+        }
+        if (now - activeAt < auto.minutes * 60_000) return
+        if (now - lastAttempt < 5 * 60_000) return
+        await autoRun('idle')
+      }
+
+      const interval = scope.interval(tick, 30_000)
+      const kickoff = scope.timeout(tick, 20_000)
+      return () => {
+        interval()
+        kickoff()
+      }
     }, 'dsh-sync: autosync')
   })
 

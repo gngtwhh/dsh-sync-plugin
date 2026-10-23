@@ -1,7 +1,11 @@
 /**
- * dsh-sync Client 半：设置 → 同步 页面。
- * 只通过 POST /api/dsh-sync 调用 Host 端同一套操作（与模型工具共用实现），
- * 样式全部使用主题 token，不依赖任何 Harness Client 包。
+ * dsh-sync Client 半：
+ *  - 侧栏底部的「同步」状态栏（显示状态点，点击打开同步面板）
+ *  - 主区域同步面板（main: sync）
+ *  - 设置 → 同步与备份（settings.section: dsh-sync）
+ *
+ * 三者共用同一份状态逻辑，只通过 POST /api/dsh-sync 与 Host 通信，
+ * 与模型工具调用的是同一套实现。
  */
 window.__ModuleLoader__.load({
   id: '@local/dsh-sync',
@@ -12,22 +16,40 @@ window.__ModuleLoader__.load({
 
     const NS = 'dshSync'
     const API = 'api/dsh-sync'
+    const PANEL_ID = 'sync'
 
     const en = {
       nav: 'Sync & backup',
+      panel: 'Sync',
       title: 'Sync & backup',
       intro:
-        'Back up workspace registrations and session logs to a Git remote or a shared folder, and merge another device’s sessions back in. Credentials and caches are never included.',
+        'Back up session logs, workspace registrations and (optionally) workspace files to a Git remote or a shared folder, then merge them across devices.',
       configTitle: 'Sync target',
       kindGit: 'Git repository',
       kindDir: 'Shared folder',
       save: 'Save',
-      saved: 'Target saved.',
+      saved: 'Saved.',
       remotePlaceholder: 'git@github.com:you/dsh-sync.git',
       pathPlaceholder: 'D:\\OneDrive\\dsh-sync',
       branchPlaceholder: 'main',
       gitHint: 'Use a private repository. Each sync writes one snapshot commit and always fast-forwards.',
       dirHint: 'Point this at a folder already synced by Syncthing, OneDrive or similar.',
+      scopeTitle: 'What to sync',
+      scopeSessions: 'Session history only',
+      scopeSessionsHint: 'Session logs and the workspace registry. Smallest and safest.',
+      scopeWorkspace: 'Sessions + workspace files',
+      scopeWorkspaceHint:
+        'Also copy files inside workspace folders (Git-aware: .gitignore is respected, node_modules and similar are skipped).',
+      scopeFull: 'Everything',
+      scopeFullHint: 'Adds uploaded attachments and settings.yaml on top of workspace files.',
+      autoTitle: 'Automatic sync',
+      autoOff: 'Off',
+      autoInterval: 'Every N minutes',
+      autoIdle: 'After N minutes idle',
+      autoStartup: 'Once at startup',
+      autoMinutes: 'Minutes',
+      autoHint:
+        '“Idle” waits until no session has been written for N minutes. “Interval” runs on a fixed schedule. Manual sync is always available.',
       target: 'Target',
       none: 'Not configured',
       local: 'This device',
@@ -49,26 +71,48 @@ window.__ModuleLoader__.load({
       donePull: 'Pulled {pull} file(s).',
       doneBackup: 'Backup written to {file}',
       doneRestore: 'Restored {files} file(s).',
-      conflicts: '{count} conflicting file(s) were kept locally; the remote copies are under the conflicts folder.',
+      conflicts: '{count} conflicting file(s) were kept locally; the other version is preserved in the repository under conflicts/.',
       restart: 'Newly pulled workspaces may need a DSH restart before they appear in the sidebar.',
-      error: 'Failed',
+      skipped: '{count} file(s) were skipped because their workspace folder does not exist here.',
+      localLine: '{sessions} sessions · {files} workspace files · {bytes}',
+      remoteLine: '{sessions} sessions · {files} workspace files · {bytes}',
+      openSettings: 'Open sync page',
+      statusReady: 'Up to date',
+      statusPending: '{count} pending',
+      statusError: 'Last sync failed',
+      statusUnconfigured: 'Not configured',
     }
 
     const zh = {
       nav: '同步与备份',
+      panel: '同步',
       title: '同步与备份',
       intro:
-        '把工作区登记与会话日志备份到 Git 仓库或共享目录，并合并另一台设备的会话。凭据与缓存不会包含在内。',
+        '把会话日志、工作区登记（可选：工作区目录文件）备份到 Git 仓库或共享目录，并在多台设备之间合并。',
       configTitle: '同步目标',
       kindGit: 'Git 仓库',
       kindDir: '共享文件夹',
       save: '保存',
-      saved: '目标已保存。',
+      saved: '已保存。',
       remotePlaceholder: 'git@github.com:you/dsh-sync.git',
       pathPlaceholder: 'D:\\OneDrive\\dsh-sync',
       branchPlaceholder: 'main',
       gitHint: '建议使用私有仓库；每次同步提交一个快照，始终快进推送。',
       dirHint: '填写已由 Syncthing、OneDrive 等同步的本地目录。',
+      scopeTitle: '同步层级',
+      scopeSessions: '仅会话历史',
+      scopeSessionsHint: '会话日志 + 工作区登记。体积最小、最安全。',
+      scopeWorkspace: '会话 + 工作区文件',
+      scopeWorkspaceHint: '再加上工作区目录里的文件；Git 仓库会遵守 .gitignore，并跳过 node_modules 等目录。',
+      scopeFull: '全部',
+      scopeFullHint: '在工作区文件基础上，再包含上传的附件与 settings.yaml。',
+      autoTitle: '自动同步',
+      autoOff: '关闭',
+      autoInterval: '每 N 分钟',
+      autoIdle: '空闲 N 分钟后',
+      autoStartup: '启动时一次',
+      autoMinutes: '分钟',
+      autoHint: '「空闲」指 N 分钟内没有新的会话写入；「定时」按固定间隔执行。手动同步始终可用。',
       target: '同步目标',
       none: '尚未配置',
       local: '本机',
@@ -90,22 +134,34 @@ window.__ModuleLoader__.load({
       donePull: '拉取完成：{pull} 个文件。',
       doneBackup: '备份已写入 {file}',
       doneRestore: '恢复完成：{files} 个文件。',
-      conflicts: '有 {count} 个冲突文件保留了本机版本，远端版本已存到 conflicts 目录。',
+      conflicts: '有 {count} 个冲突文件保留了本机版本，另一版本已保存在仓库 conflicts/ 目录。',
       restart: '新拉取的工作区可能需要重启 DSH 才会出现在侧栏。',
-      error: '失败',
+      skipped: '有 {count} 个文件因本机没有对应工作区目录而跳过。',
+      localLine: '{sessions} 个会话 · {files} 个工作区文件 · {bytes}',
+      remoteLine: '{sessions} 个会话 · {files} 个工作区文件 · {bytes}',
+      openSettings: '打开同步面板',
+      statusReady: '已同步',
+      statusPending: '{count} 项待同步',
+      statusError: '上次同步失败',
+      statusUnconfigured: '未配置',
     }
 
     const CSS = [
+      '.dsy_page{width:100%;min-width:0;height:100%;min-height:0;display:flex;overflow:hidden;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base)}',
+      '.dsy_scroll{scrollbar-gutter:stable;flex:1;min-height:0;overflow:auto}',
+      '.dsy_content{max-width:960px;margin:0 auto;padding:28px clamp(24px,4vw,48px) 48px;display:flex;flex-direction:column;gap:14px}',
       '.dsy_section{display:flex;flex-direction:column;gap:12px;max-width:760px;color:var(--dsw-alias-label-primary)}',
-      '.dsy_title{margin:0;font-size:18px;font-weight:600}',
-      '.dsy_intro{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary)}',
+      '.dsy_heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px}',
+      '.dsy_h1{margin:0;font-size:20px;font-weight:500;line-height:28px}',
+      '.dsy_sub{margin:0;font-size:18px;font-weight:600}',
+      '.dsy_intro{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);max-width:760px}',
       '.dsy_card{border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:4px 16px}',
       '.dsy_row{display:flex;align-items:baseline;justify-content:space-between;gap:24px;padding:10px 0;border-bottom:.5px solid var(--dsw-alias-border-l1);font-size:13px;line-height:20px}',
       '.dsy_row:last-child{border-bottom:0}',
       '.dsy_label{color:var(--dsw-alias-label-secondary);flex:none}',
       '.dsy_value{color:var(--dsw-alias-label-primary);text-align:right;min-width:0;overflow-wrap:anywhere}',
       '.dsy_mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}',
-      '.dsy_actions{display:flex;flex-wrap:wrap;gap:8px}',
+      '.dsy_actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}',
       '.dsy_btn{font:inherit;font-size:13px;line-height:20px;padding:5px 14px;border-radius:8px;cursor:pointer;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
       '.dsy_btn:hover:not(:disabled){border-color:var(--dsw-alias-label-secondary)}',
       '.dsy_btn:disabled{opacity:.5;cursor:default}',
@@ -115,19 +171,34 @@ window.__ModuleLoader__.load({
       '.dsy_ok{color:var(--dsw-alias-state-success-primary)}',
       '.dsy_err{color:var(--dsw-alias-state-error-primary)}',
       '.dsy_hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin:0}',
-      '.dsy_subtitle{margin:4px 0 0;font-size:14px;font-weight:600}',
+      '.dsy_subtitle{margin:6px 0 0;font-size:14px;font-weight:600}',
       '.dsy_inline{display:flex;gap:8px}',
       '.dsy_input{flex:1;min-width:0;font:inherit;font-size:12px;padding:5px 10px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
       '.dsy_input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.dsy_branch{flex:none;max-width:120px}',
-      '.dsy_seg{display:inline-flex;gap:4px;padding:2px;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;width:fit-content}',
+      '.dsy_seg{display:inline-flex;gap:4px;padding:2px;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;width:fit-content;flex-wrap:wrap}',
       '.dsy_segbtn{font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}',
       '.dsy_segbtn[data-active="true"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
       '.dsy_segbtn:disabled{opacity:.5;cursor:default}',
+      '.dsy_options{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;max-width:760px}',
+      '.dsy_option{text-align:left;font:inherit;cursor:pointer;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
+      '.dsy_option[data-active="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:inset 0 0 0 1px var(--dsw-alias-brand-primary)}',
+      '.dsy_option:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      '.dsy_optionTitle{font-size:13px;line-height:20px;font-weight:600}',
+      '.dsy_optionHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin-top:2px}',
+      '.dsy_dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}',
+      '.dsy_badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
+      '.dsy_footer{display:flex;align-items:center;gap:8px;font:inherit;font-size:13px;line-height:20px;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;width:100%;text-align:left}',
+      '.dsy_footer:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.dsy_footer[data-wide="false"]{justify-content:center;padding:6px 0}',
+      '.dsy_footer[data-active="true"]{color:var(--dsw-alias-label-primary)}',
+      '.dsy_footerLabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsy_iconbtn{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:inherit;cursor:pointer;padding:0;width:100%;height:100%}',
+      '.dsy_iconbtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:8px}',
     ].join('\n')
 
     function injectCss() {
-      const tagId = '@local/dsh-sync/section.css'
+      const tagId = '@local/dsh-sync/panel.css'
       if (typeof document === 'undefined') return () => {}
       if (document.querySelector('style[data-plugin-css="' + tagId + '"]')) return () => {}
       const tag = document.createElement('style')
@@ -150,7 +221,7 @@ window.__ModuleLoader__.load({
       const response = await fetch(API, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: action, ...(payload || {}) }),
+        body: JSON.stringify(Object.assign({ action: action }, payload || {})),
       })
       const body = await response.json().catch(() => ({}))
       if (!response.ok || body.ok !== true) throw new Error(body.error || 'HTTP ' + response.status)
@@ -163,23 +234,11 @@ window.__ModuleLoader__.load({
       return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
     }
 
-    function TargetValue(props) {
-      const status = props.status
-      const t = props.t
-      if (!status) return h('span', { className: 'dsy_value' }, t('working'))
-      if (!status.ready) return h('span', { className: 'dsy_value' }, t('none'))
-      const text = status.target.description + (status.target.branch ? ' @ ' + status.target.branch : '')
-      return h('span', { className: 'dsy_value dsy_mono' }, text)
-    }
-
-    function SyncSection(props) {
-      const t = props.t
+    /** 同步状态与操作；面板、设置页、底栏共用。 */
+    function useSyncState() {
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(null)
       const [notice, setNotice] = useState(null)
-      const [restorePath, setRestorePath] = useState('')
-      const [draft, setDraft] = useState({ kind: 'git', remote: '', branch: 'main', path: '' })
-      const hydrated = useRef(false)
       const alive = useRef(true)
 
       useEffect(() => {
@@ -189,38 +248,27 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      const apply = useCallback((next) => {
-        if (!alive.current) return
-        setStatus(next)
-        if (next && !hydrated.current) {
-          hydrated.current = true
-          setDraft({
-            kind: next.target.kind,
-            remote: next.target.kind === 'git' && next.ready ? next.target.description : '',
-            branch: next.target.branch || 'main',
-            path: next.target.kind === 'directory' && next.ready ? next.target.description : '',
-          })
+      const refresh = useCallback(async (silent) => {
+        if (!silent) setBusy('status')
+        try {
+          const next = await call('status')
+          if (!alive.current) return
+          setStatus(next)
+          if (!silent && next && next.lastError) setNotice({ tone: 'err', text: next.lastError })
+        } catch (error) {
+          if (!silent) setNotice({ tone: 'err', text: String(error.message || error) })
+        } finally {
+          if (!silent) setBusy(null)
         }
       }, [])
 
-      const refresh = useCallback(
-        async (silent) => {
-          if (!silent) setBusy('status')
-          try {
-            const next = await call('status')
-            apply(next)
-            if (!silent && next && next.lastError) setNotice({ tone: 'err', text: next.lastError })
-          } catch (error) {
-            if (!silent) setNotice({ tone: 'err', text: String(error.message || error) })
-          } finally {
-            if (!silent) setBusy(null)
-          }
-        },
-        [apply],
-      )
-
       useEffect(() => {
         refresh(true)
+        const timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+          refresh(true)
+        }, 60000)
+        return () => clearInterval(timer)
       }, [refresh])
 
       const run = useCallback(
@@ -229,17 +277,150 @@ window.__ModuleLoader__.load({
           setNotice(null)
           try {
             const data = await call(action, payload)
-            setNotice({ tone: 'ok', text: successText(data) })
+            if (successText) setNotice({ tone: 'ok', text: successText(data) })
             const next = await call('status')
-            apply(next)
+            if (!alive.current) return
+            setStatus(next)
           } catch (error) {
             setNotice({ tone: 'err', text: String(error.message || error) })
           } finally {
             setBusy(null)
           }
         },
-        [apply],
+        [],
       )
+
+      return { status, busy, notice, refresh, run, setNotice }
+    }
+
+    /** 状态点颜色。 */
+    function toneOf(status) {
+      if (!status) return 'idle'
+      if (!status.ready) return 'idle'
+      if (status.lastError) return 'error'
+      if (status.pending && status.pending.known && status.pending.toPush + status.pending.toPull > 0) return 'warn'
+      return 'ok'
+    }
+
+    function dotColor(tone) {
+      switch (tone) {
+        case 'ok':
+          return 'var(--dsw-alias-state-success-primary)'
+        case 'warn':
+          return 'var(--dsw-alias-state-warn-primary)'
+        case 'error':
+          return 'var(--dsw-alias-state-error-primary)'
+        default:
+          return 'var(--dsw-alias-state-idle-primary)'
+      }
+    }
+
+    function statusLabel(status, t) {
+      if (!status) return t('working')
+      if (!status.ready) return t('statusUnconfigured')
+      if (status.lastError) return t('statusError')
+      if (status.pending && status.pending.known) {
+        const count = status.pending.toPush + status.pending.toPull
+        if (count > 0) return format(t('statusPending'), { count })
+      }
+      return t('statusReady')
+    }
+
+    function SyncIcon(props) {
+      const size = props.size || 20
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 24 24',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+        },
+        h('path', { d: 'M7 18a4.5 4.5 0 0 1-.4-8.98A6 6 0 0 1 18.3 9.6 4.2 4.2 0 0 1 17.8 18H7z' }),
+        h('path', { d: 'M9.5 13.2 12 10.7l2.5 2.5' }),
+        h('path', { d: 'M12 10.9v5.4' }),
+      )
+    }
+
+    /** 侧栏底部的状态栏：状态点 + 标签，点击打开同步面板。 */
+    function FooterAction(props) {
+      const t = props.t
+      const wide = props.wide !== false
+      const openPanel = props.openPanel
+      const { status } = useSyncState()
+      const tone = toneOf(status)
+      const label = statusLabel(status, t)
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'dsy_footer',
+          'data-wide': wide ? 'true' : 'false',
+          title: t('panel') + ' · ' + label,
+          'aria-label': t('panel'),
+          onClick: openPanel,
+        },
+        h('span', { className: 'dsy_dot', style: { background: dotColor(tone) } }),
+        wide ? h('span', { className: 'dsy_footerLabel' }, t('panel')) : null,
+      )
+    }
+
+    function Row(props) {
+      return h(
+        'div',
+        { className: 'dsy_row' },
+        h('span', { className: 'dsy_label' }, props.label),
+        h('span', { className: 'dsy_value' + (props.mono ? ' dsy_mono' : '') }, props.children),
+      )
+    }
+
+    function SyncBody(props) {
+      const t = props.t
+      const state = useSyncState()
+      const status = state.status
+      const busy = state.busy
+      const notice = state.notice
+      const [restorePath, setRestorePath] = useState('')
+      const [draft, setDraft] = useState({ kind: 'git', remote: '', branch: 'main', path: '' })
+      const [minutesDraft, setMinutesDraft] = useState('15')
+      const hydrated = useRef(false)
+
+      useEffect(() => {
+        if (!status || hydrated.current) return
+        hydrated.current = true
+        setDraft({
+          kind: status.target.kind,
+          remote: status.target.kind === 'git' && status.ready ? status.target.description : '',
+          branch: status.target.branch || 'main',
+          path: status.target.kind === 'directory' && status.ready ? status.target.description : '',
+        })
+      }, [status])
+
+      const auto = (status && status.autoSync) || { mode: 'off', minutes: 15 }
+      useEffect(() => {
+        setMinutesDraft(String(auto.minutes))
+      }, [auto.minutes])
+
+      const pending = status && status.pending && status.pending.known ? status.pending : null
+      const disabled = busy !== null
+      const scope = (status && status.scope) || 'sessions'
+
+      const commitMinutes = () => {
+        const minutes = Number(minutesDraft)
+        if (!Number.isFinite(minutes) || minutes < 1) {
+          setMinutesDraft(String(auto.minutes))
+          return
+        }
+        const clamped = Math.min(1440, Math.round(minutes))
+        setMinutesDraft(String(clamped))
+        if (clamped === auto.minutes) return
+        state.run('configure', { autoMode: auto.mode, autoMinutes: clamped }, () => t('saved'))
+      }
 
       const syncSummary = (data) => {
         const lines = [
@@ -248,21 +429,110 @@ window.__ModuleLoader__.load({
             pull: data.pulled ? data.pulled.files : 0,
           }),
         ]
-        if (data.conflicts && data.conflicts.length > 0) {
-          lines.push(format(t('conflicts'), { count: data.conflicts.length }))
-        }
+        if (data.conflicts && data.conflicts.length > 0) lines.push(format(t('conflicts'), { count: data.conflicts.length }))
+        if (data.skipped && data.skipped.length > 0) lines.push(format(t('skipped'), { count: data.skipped.length }))
         if (data.pulled && data.pulled.files > 0) lines.push(t('restart'))
         return lines.join(' ')
       }
 
-      const pending = status && status.pending && status.pending.known ? status.pending : null
-      const disabled = busy !== null
+      const scopeOptions = [
+        { id: 'sessions', title: t('scopeSessions'), hint: t('scopeSessionsHint') },
+        { id: 'workspace', title: t('scopeWorkspace'), hint: t('scopeWorkspaceHint') },
+        { id: 'full', title: t('scopeFull'), hint: t('scopeFullHint') },
+      ]
+      const autoOptions = [
+        { id: 'off', title: t('autoOff') },
+        { id: 'interval', title: t('autoInterval') },
+        { id: 'idle', title: t('autoIdle') },
+        { id: 'startup', title: t('autoStartup') },
+      ]
 
       return h(
         'div',
-        { className: 'dsy_section' },
-        h('h2', { className: 'dsy_title' }, t('title')),
+        { className: props.variant === 'page' ? 'dsy_content' : 'dsy_section' },
+        props.variant === 'page'
+          ? h(
+              'div',
+              { className: 'dsy_heading' },
+              h('h1', { className: 'dsy_h1' }, t('title')),
+              h(
+                'span',
+                { className: 'dsy_badge' },
+                h('span', { className: 'dsy_dot', style: { background: dotColor(toneOf(status)) } }),
+                statusLabel(status, t),
+              ),
+            )
+          : h('h2', { className: 'dsy_sub' }, t('title')),
         h('p', { className: 'dsy_intro' }, t('intro')),
+
+        h('h3', { className: 'dsy_subtitle' }, t('scopeTitle')),
+        h(
+          'div',
+          { className: 'dsy_options', role: 'radiogroup' },
+          scopeOptions.map((option) =>
+            h(
+              'button',
+              {
+                key: option.id,
+                type: 'button',
+                role: 'radio',
+                'aria-checked': scope === option.id,
+                className: 'dsy_option',
+                'data-active': scope === option.id ? 'true' : undefined,
+                disabled: disabled,
+                onClick: () => state.run('configure', { scope: option.id }, () => t('saved')),
+              },
+              h('div', { className: 'dsy_optionTitle' }, option.title),
+              h('div', { className: 'dsy_optionHint' }, option.hint),
+            ),
+          ),
+        ),
+
+        h('h3', { className: 'dsy_subtitle' }, t('autoTitle')),
+        h(
+          'div',
+          { className: 'dsy_actions' },
+          h(
+            'div',
+            { className: 'dsy_seg', role: 'radiogroup' },
+            autoOptions.map((option) =>
+              h(
+                'button',
+                {
+                  key: option.id,
+                  type: 'button',
+                  role: 'radio',
+                  'aria-checked': auto.mode === option.id,
+                  className: 'dsy_segbtn',
+                  'data-active': auto.mode === option.id ? 'true' : undefined,
+                  disabled: disabled,
+                  onClick: () =>
+                    state.run('configure', { autoMode: option.id, autoMinutes: auto.minutes }, () => t('saved')),
+                },
+                option.title,
+              ),
+            ),
+          ),
+          auto.mode === 'interval' || auto.mode === 'idle'
+            ? h('input', {
+                className: 'dsy_input dsy_branch',
+                type: 'number',
+                min: 1,
+                max: 1440,
+                value: minutesDraft,
+                'aria-label': t('autoMinutes'),
+                onChange: (event) => setMinutesDraft(event.target.value),
+                onBlur: commitMinutes,
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    commitMinutes()
+                  }
+                },
+              })
+            : null,
+        ),
+        h('p', { className: 'dsy_hint' }, t('autoHint')),
 
         h('h3', { className: 'dsy_subtitle' }, t('configTitle')),
         h(
@@ -320,7 +590,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'dsy_btn',
               disabled: disabled,
-              onClick: () => run('configure', draft, () => t('saved')),
+              onClick: () => state.run('configure', draft, () => t('saved')),
             },
             busy === 'configure' ? t('working') : t('save'),
           ),
@@ -330,54 +600,35 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dsy_card' },
+          h(Row, { label: t('target'), mono: true }, status && status.ready ? status.target.description + (status.target.branch ? ' @ ' + status.target.branch : '') : t('none')),
           h(
-            'div',
-            { className: 'dsy_row' },
-            h('span', { className: 'dsy_label' }, t('target')),
-            h(TargetValue, { status: status, t: t }),
+            Row,
+            { label: t('local') },
+            status
+              ? format(t('localLine'), {
+                  sessions: status.local.sessions,
+                  files: status.local.workspaceFiles,
+                  bytes: status.local.bytesText,
+                })
+              : t('working'),
           ),
           h(
-            'div',
-            { className: 'dsy_row' },
-            h('span', { className: 'dsy_label' }, t('local')),
-            h(
-              'span',
-              { className: 'dsy_value' },
-              status ? status.local.sessions + ' / ' + status.local.bytesText : t('working'),
-            ),
+            Row,
+            { label: t('remote') },
+            status && status.remote
+              ? format(t('remoteLine'), {
+                  sessions: status.remote.sessions === undefined ? '?' : status.remote.sessions,
+                  files: status.remote.workspaceFiles === undefined ? '?' : status.remote.workspaceFiles,
+                  bytes: status.remote.bytesText || '?',
+                }) + ' · ' + (fmtTime(status.remote.updatedAt) || '?')
+              : t('never'),
           ),
           h(
-            'div',
-            { className: 'dsy_row' },
-            h('span', { className: 'dsy_label' }, t('remote')),
-            h(
-              'span',
-              { className: 'dsy_value' },
-              status && status.remote
-                ? (status.remote.sessions === undefined ? '?' : status.remote.sessions) +
-                    ' / ' +
-                    (status.remote.bytesText || '?') +
-                    ' · ' +
-                    (fmtTime(status.remote.updatedAt) || '?')
-                : t('never'),
-            ),
+            Row,
+            { label: t('pending') },
+            pending ? format(t('pendingValue'), { push: pending.toPush, pull: pending.toPull }) : '—',
           ),
-          h(
-            'div',
-            { className: 'dsy_row' },
-            h('span', { className: 'dsy_label' }, t('pending')),
-            h(
-              'span',
-              { className: 'dsy_value' },
-              pending ? format(t('pendingValue'), { push: pending.toPush, pull: pending.toPull }) : '—',
-            ),
-          ),
-          h(
-            'div',
-            { className: 'dsy_row' },
-            h('span', { className: 'dsy_label' }, t('lastSync')),
-            h('span', { className: 'dsy_value' }, (status && fmtTime(status.lastSyncAt)) || t('never')),
-          ),
+          h(Row, { label: t('lastSync') }, (status && fmtTime(status.lastSyncAt)) || t('never')),
         ),
 
         h(
@@ -389,7 +640,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'dsy_btn dsy_primary',
               disabled: disabled || !(status && status.ready),
-              onClick: () => run('push', undefined, syncSummary),
+              onClick: () => state.run('push', undefined, syncSummary),
             },
             busy === 'push' ? t('working') : t('sync'),
           ),
@@ -399,7 +650,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'dsy_btn',
               disabled: disabled || !(status && status.ready),
-              onClick: () => run('pull', undefined, syncSummary),
+              onClick: () => state.run('pull', undefined, syncSummary),
             },
             busy === 'pull' ? t('working') : t('pull'),
           ),
@@ -409,7 +660,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'dsy_btn',
               disabled: disabled,
-              onClick: () => run('backup', undefined, (data) => format(t('doneBackup'), { file: data.file })),
+              onClick: () => state.run('backup', undefined, (data) => format(t('doneBackup'), { file: data.file })),
             },
             busy === 'backup' ? t('working') : t('backup'),
           ),
@@ -419,7 +670,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'dsy_btn',
               disabled: disabled,
-              onClick: () => refresh(false),
+              onClick: () => state.refresh(false),
             },
             busy === 'status' ? t('working') : t('refresh'),
           ),
@@ -449,12 +700,26 @@ window.__ModuleLoader__.load({
               className: 'dsy_btn',
               disabled: disabled || restorePath.trim().length === 0,
               onClick: () =>
-                run('restore', { file: restorePath.trim() }, (data) => format(t('doneRestore'), { files: data.files })),
+                state.run('restore', { file: restorePath.trim() }, (data) =>
+                  format(t('doneRestore'), { files: data.files }),
+                ),
             },
             busy === 'restore' ? t('working') : t('restore'),
           ),
         ),
       )
+    }
+
+    function SyncPage(props) {
+      return h(
+        'div',
+        { className: 'dsy_page' },
+        h('div', { className: 'dsy_scroll' }, h(SyncBody, { t: props.t, variant: 'page' })),
+      )
+    }
+
+    function SyncSection(props) {
+      return h(SyncBody, { t: props.t, variant: 'section' })
     }
 
     return {
@@ -463,15 +728,30 @@ window.__ModuleLoader__.load({
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-sync: locale')
         ctx.effect(() => injectCss(), 'dsh-sync: styles')
+
+        const openPanel = () => {
+          const layout = ctx.get('layout')
+          if (layout && typeof layout.selectPanel === 'function') layout.selectPanel(PANEL_ID)
+        }
+
+        ctx.slots.inject('main', () =>
+          ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, SyncPage),
+        )
+        ctx.slots.inject('sidebar.panellist', () =>
+          ctx.slots.register(
+            { name: 'sidebar.panellist', id: PANEL_ID, order: 20, locale: NS, label: () => t('panel') },
+            SyncIcon,
+          ),
+        )
+        ctx.slots.inject('sidebar.footer.action', () =>
+          ctx.slots.register(
+            { name: 'sidebar.footer.action', id: 'dsh-sync-status', order: 20, locale: NS, inject: () => ({ openPanel }) },
+            FooterAction,
+          ),
+        )
         ctx.slots.inject('settings.section', () =>
           ctx.slots.register(
-            {
-              name: 'settings.section',
-              id: 'dsh-sync',
-              order: 42,
-              label: () => t('nav'),
-              locale: NS,
-            },
+            { name: 'settings.section', id: 'dsh-sync', order: 42, label: () => t('nav'), locale: NS },
             SyncSection,
           ),
         )

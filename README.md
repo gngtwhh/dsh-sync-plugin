@@ -1,83 +1,107 @@
 # dsh-sync
 
-DeepSeek Harness 插件：把**工作区登记**与**会话日志**备份并同步到 Git 远端或共享目录，用于多端（多台电脑）之间接续工作。
+DeepSeek Harness 插件：把**会话历史**、**工作区登记**（可选：**工作区目录文件**、附件、设置）备份并同步到 Git 远端或共享目录，用于多台电脑之间接续工作。
 
-- 设置页：**设置 → 同步与备份**（左侧栏底部的设置面板）。
-- 模型工具：`sync_status` / `sync_configure` / `sync_push` / `sync_pull` / `sync_backup` / `sync_restore`。
-- 设置页与工具调用的是**同一套实现**（`lib/engine.js`），行为一致。
+- **侧栏底部同步栏**：状态点 + 「同步」入口，点击打开同步面板。
+- **同步面板**（侧栏图标 / 底部状态栏进入）：状态、层级、自动同步、目标、立即同步、导出/恢复。
+- **设置 → 同步与备份**：同一个面板的表单版本。
+- **模型工具**：`sync_status` / `sync_configure` / `sync_push` / `sync_pull` / `sync_backup` / `sync_restore`。
 
-## 同步什么
+界面与工具调用的是同一套实现（`lib/engine.js`），行为一致。
 
-| 数据 | 是否同步 | 说明 |
+## 同步层级
+
+| 层级 | 内容 | 适用 |
 | --- | --- | --- |
-| `~/.dsh/sessions/**` | 是 | 会话事件日志（追加写），按文件增量复制 |
-| `~/.dsh/storages/workspace.json` | 是 | 工作区列表、会话归属、归档/置顶、排序 |
-| `~/.dsh/attachments/**` | 可选 | 会话里上传的图片/PDF，体积大，默认关闭 |
-| `~/.dsh/settings.yaml` | 可选 | 模型与界面设置，默认关闭 |
-| `.credentials.yaml`、`cache/`、`session_projcache/` | 否 | 凭据与派生缓存不进入备份 |
+| `sessions` 仅会话历史 | 会话日志 + 工作区登记 | 默认。体积最小，只搬“聊过什么” |
+| `workspace` 会话 + 工作区文件 | 上一级 + 工作区目录里的文件 | 换机器后代码和会话一起到位 |
+| `full` 全部 | 上一级 + 上传附件 + `settings.yaml` | 整机迁移 |
 
-## 两种目标
+工作区文件规则：
 
-- **Git 仓库**（推荐）：每次同步在远端产生一个快照提交，天然具备历史与回滚。
-  插件始终先把本地镜像 `reset` 到远端，再叠加本机内容后提交，因此**永远快进推送、不会产生 Git 冲突文件**。
-- **共享目录**：指向一个已被 Syncthing / OneDrive / 坚果云同步的本地目录。
-  镜像布局相同，语义上就是「把备份放在一个会被自动搬运的文件夹里」。Syncthing 可用；它自身产生的
-  `*.sync-conflict-*` 文件不会被读取，建议关闭该目录的版本冲突副本或定期清理。
+- 工作区本身是 Git 仓库时用 `git ls-files --cached --others --exclude-standard`，**自动遵守 .gitignore**，不会带 `.git`。
+- 非 Git 目录退化为遍历 + 内置排除（`node_modules`、`.venv`、`__pycache__`、`dist`、`build`、`target`、`coverage` 等）。
+- 额外 `ignore` 规则（如 `*.log`、`tmp/`、`**/dist/**`），单文件上限默认 4 MB，文件数上限默认 20000。
+- 删除**不会**跨设备传播（默认保留远端副本），如需传播可设 `propagateDeletions: true`。
+
+## 自动同步
+
+| 模式 | 行为 |
+| --- | --- |
+| `off` | 只手动同步 |
+| `interval` | 每 N 分钟执行一次「拉取 + 推送」 |
+| `idle` | 会话安静 N 分钟后执行（每 30 秒探测一次，无活动不打扰） |
+| `startup` | DSH 启动后执行一次 |
+
+`sync_configure` 也可直接设置：
+
+```json
+{ "scope": "workspace", "autoMode": "idle", "autoMinutes": 15 }
+```
 
 ## 冲突规则
 
-会话日志是「单写者 + 追加写」：
+- **会话日志**：单写者追加写，两个版本互为前缀时取更长的一份；真正分叉时保留本机，远端版本存到 `~/.dsh/sync/conflicts/<时间>/`。
+- **工作区文件**：三方合并（本机 / 远端 / 上次同步基线）。只有两端都改了才判冲突：保留本机版本，另一版本写进仓库 `conflicts/<时间>/`，任何设备都能取回。
+- **工作区登记**：语义合并——工作区/会话/归档/置顶取有序并集，标题按 `updatedAt` 取较新，路径保留本机。
 
-- 一端是另一端的前缀 → 取更长的一份（正常追加）。
-- 两端各自追加了不同内容（同一会话在两台设备同时继续）→ 保留本机版本，把远端版本存到
-  `~/.dsh/sync/conflicts/<时间>/<相对路径>`，并在结果里报告冲突数。
-- 工作区登记做语义合并：工作区/会话/归档/置顶取**有序并集**，标题按 `updatedAt` 取较新，路径保留本机。
-  代价是**删除类操作不跨设备传播**（这是备份场景下的安全取舍）。
+## 两种目标
+
+- **Git 仓库**（推荐）：每次同步产生一个快照提交，历史即备份。插件先把本地镜像 `reset` 到远端，再叠加本机内容提交，因此**永远快进推送、不会产生 Git 冲突文件**。
+- **共享目录**：指向已被 Syncthing / OneDrive / 坚果云同步的目录。Syncthing 可用；它产生的 `*.sync-conflict-*` 不会被读取，建议关闭该目录的冲突副本。
+
+## 安装（另一台设备）
+
+在 Web 侧栏 **Plugins → Add plugin** 里填以下任一种：
+
+- `git+ssh://git@github.com/you/dsh-sync-plugin.git`
+- tarball 路径（`npm pack` 产物）
+- 本地目录绝对路径
+
+装完点 **Enable now**，再到 **设置 → 同步与备份** 填同一个仓库地址即可。
 
 ## 配置
 
-安装后打开 **设置 → 同步与备份**，选择「Git 仓库 / 共享文件夹」，填入地址并保存即可，立即生效。
-配置写入 `~/.dsh/sync/settings.json`，优先级高于 `cordis.patch.yml` 里的初始 `config`。
-
-也可以在 `cordis.patch.yml` 里预先配置：
+界面里保存的配置写入 `~/.dsh/sync/settings.json`，优先级高于 `cordis.patch.yml` 的初始 `config`：
 
 ```yaml
 - id: dsh-sync
   config:
+    scope: workspace
     target:
       kind: git
       remote: git@github.com:you/dsh-sync.git
       branch: main
-    autosyncMinutes: 0
+    autoSync:
+      mode: idle
+      minutes: 15
+    ignore: ["*.log", "tmp/"]
 ```
 
-`autosyncMinutes > 0` 时后台每分钟检查一次，到点执行「拉取 + 推送」。
+## 仓库镜像布局
 
-## 首次使用（GitHub）
-
-1. 在 GitHub 建一个**私有**仓库（建议默认分支 `main`，不要勾选初始化 README）。
-2. 本机已配置好 `git` 与 SSH（或使用 HTTPS + PAT）。
-3. 设置页填入 `git@github.com:you/dsh-sync.git`，保存 → 点「立即同步」。
-4. 另一台电脑装同一个插件，填同一个仓库 → 点「仅拉取」。
-
-## 恢复
-
-`sync_backup` 生成 `~/.dsh/backups/dsh-backup-<时间>.zip`（store 方式打包，会话日志本身已压缩）。
-`sync_restore` 从该 zip 恢复：会先生成一份当前状态的备份；比本机更短/更旧的日志不会覆盖本机；
-工作区登记与现有内容合并。设置页的「从备份恢复」做同一件事。
+```
+index.json                 上次发布的文件指纹
+manifest.json              设备、时间、规模、层级
+README.md                  自动生成
+storages/workspace.json    工作区登记
+sessions/...               会话日志
+workspaces/<id>/...        工作区文件（按工作区 id 存放）
+attachments/...            附件（full 层级）
+conflicts/<时间>/...       冲突保留的对方版本
+```
 
 ## 已知限制
 
-- **工作区路径需要两端一致**：会话按 `header.cwd` 归入工作区，路径不同则不会出现在同一工作区下。
-  建议两端使用相同盘符/路径布局，或把工作区放在会被同步的同一个根目录里。
-- **拉取后可能需要重启 DSH**：工作区登记是磁盘文件，运行中的宿主进程有自己的内存副本；
-  新拉取的工作区可能要重启后才出现在侧栏（会话日志本身即时可用）。
-- **运行中的会话会持续增长**：每次同步都会推送当前活动会话的增量，这是预期行为。
+- **工作区路径需两端一致**：会话按 `header.cwd` 归入工作区，工作区文件也按登记里的路径还原。路径不同时文件会被跳过并计入 `skipped`。
+- **拉取后可能需要重启 DSH**：工作区登记是磁盘文件，运行中的宿主进程有自己的内存副本。
+- **运行中的会话会持续增长**：每次同步都会推送当前活动会话的增量。
 - 只做文件级增量，不做内容级合并；冲突以「保留双方」为准，不静默丢弃。
 
 ## 自测
 
 ```powershell
-node test/run.mjs   # 端到端：两台设备 + 本地裸仓库、追加、冲突、备份、恢复、目录目标
-node test/api.mjs   # 设置页 RPC 契约（请求/响应/错误）
+node test/run.mjs        # 端到端：两台设备 + 裸仓库、追加、会话冲突、备份、恢复、目录目标
+node test/workspace.mjs  # 工作区文件：层级、排除规则、三方合并、冲突保留、自动同步配置
+node test/api.mjs        # 面板 RPC 契约
 ```
