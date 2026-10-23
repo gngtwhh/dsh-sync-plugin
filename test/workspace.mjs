@@ -224,6 +224,53 @@ async function main() {
   await engineF.sync({ mode: 'pull' })
   check('关闭的工作区不会被拉回本机', !(await exists(path.join(proj1, 'a.js'))))
 
+  console.log('目录映射')
+  const shared3 = path.join(root, 'shared3')
+  const hproj = path.join(root, 'hproj')
+  await write(path.join(hproj, 'x/a.js'), 'export const fromH = 1\n')
+  const homeH = path.join(root, 'H', '.dsh')
+  await fs.mkdir(homeH, { recursive: true })
+  await write(path.join(homeH, 'storages/workspace.json'), JSON.stringify(registry('w9', hproj), null, 2))
+  const engineH = new SyncEngine(
+    resolveConfig({ name: 'ws3', target: { kind: 'directory', path: shared3 }, scope: 'workspace' }, { home: homeH, device: 'H' }),
+  )
+  await engineH.sync({ mode: 'push' })
+  check('H 推送了 hproj 的文件', await exists(path.join(shared3, 'workspaces/w9/x/a.js')))
+
+  const mappedRoot = path.join(root, 'mapped')
+  await fs.mkdir(path.join(mappedRoot, 'proj'), { recursive: true })
+  const homeG = path.join(root, 'G', '.dsh')
+  await fs.mkdir(homeG, { recursive: true })
+  await write(
+    path.join(homeG, 'storages/workspace.json'),
+    JSON.stringify(registry('w9', 'D:\\remote\\proj'), null, 2),
+  )
+  const engineG = new SyncEngine(
+    resolveConfig(
+      {
+        name: 'ws3',
+        target: { kind: 'directory', path: shared3 },
+        scope: 'workspace',
+        pathMap: ['D:\\remote => ' + mappedRoot],
+      },
+      { home: homeG, device: 'G' },
+    ),
+  )
+  const pullG = await engineG.sync({ mode: 'pull' })
+  check('映射后文件落到本机路径', await exists(path.join(mappedRoot, 'proj/x/a.js')))
+  check('映射后没有跳过文件', pullG.skipped.length === 0, pullG.skipped)
+  const registryG = JSON.parse(await fs.readFile(path.join(homeG, 'storages/workspace.json'), 'utf8'))
+  check('工作区登记的路径被改写为本机路径', registryG.tables.workspaces.w9.path === path.join(mappedRoot, 'proj'), registryG.tables.workspaces.w9.path)
+
+  const homeI = path.join(root, 'I', '.dsh')
+  await fs.mkdir(homeI, { recursive: true })
+  await write(path.join(homeI, 'storages/workspace.json'), JSON.stringify(registry('w9', path.join(root, 'missing-proj')), null, 2))
+  const engineI = new SyncEngine(
+    resolveConfig({ name: 'ws3', target: { kind: 'directory', path: shared3 }, scope: 'workspace' }, { home: homeI, device: 'I' }),
+  )
+  const pullI = await engineI.sync({ mode: 'pull' })
+  check('目录不存在时不创建、只记跳过', pullI.skipped.length >= 1 && !(await exists(path.join(root, 'missing-proj'))), pullI.skipped)
+
   console.log(failures === 0 ? '\n全部通过' : `\n${failures} 个用例失败`)
   process.exitCode = failures === 0 ? 0 : 1
 }

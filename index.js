@@ -64,6 +64,9 @@ function statusText(status) {
       `工作区文件：${status.workspaceFileSummary.enabled}/${status.workspaceFileSummary.total} 个工作区已启用`,
     )
   }
+  if (Array.isArray(status.pathMap) && status.pathMap.length > 0) {
+    lines.push(`目录映射：${status.pathMap.join('；')}`)
+  }
   lines.push(`自动同步：${AUTO_TEXT[auto.mode] ?? auto.mode}${auto.mode === 'off' ? '' : `（${auto.minutes} 分钟）`}`)
   lines.push(
     `本机：${local.sessions ?? 0} 个会话，${local.workspaceFiles ?? 0} 个工作区文件，共 ${local.bytesText ?? '0 B'}`,
@@ -197,6 +200,12 @@ export function apply(ctx, config) {
       }
     }
     if (Array.isArray(payload.ignore)) next.ignore = payload.ignore
+    if (payload.pathMap !== undefined) {
+      const lines = Array.isArray(payload.pathMap) ? payload.pathMap : String(payload.pathMap).split(/\r?\n/)
+      next.pathMap = lines
+        .map((line) => (typeof line === 'string' ? line.trim() : ''))
+        .filter((line) => line.includes('=>'))
+    }
     if (payload.workspaceFiles && typeof payload.workspaceFiles === 'object') {
       const currentFiles = next.workspaceFiles ?? current.workspaceFiles ?? {}
       const include = { ...(currentFiles.include ?? {}) }

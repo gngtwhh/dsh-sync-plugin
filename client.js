@@ -34,6 +34,10 @@ window.__ModuleLoader__.load({
       branchPlaceholder: 'main',
       gitHint: 'Use a private repository. Each sync writes one snapshot commit and always fast-forwards.',
       dirHint: 'Point this at a folder already synced by Syncthing, OneDrive or similar.',
+      mapTitle: 'Directory mapping',
+      mapHint:
+        'One rule per line: “remote prefix => local prefix”. The prefix is rewritten when the workspace registry is merged, so this device stores files under its own path. Leave empty to require identical paths on both devices.',
+      mapPlaceholder: 'D:\\Data\\code => E:\\code',
       scopeTitle: 'What to sync',
       scopeSessions: 'Session history only',
       scopeSessionsHint: 'Session logs and the workspace registry. Smallest and safest.',
@@ -106,6 +110,10 @@ window.__ModuleLoader__.load({
       branchPlaceholder: 'main',
       gitHint: '建议使用私有仓库；每次同步提交一个快照，始终快进推送。',
       dirHint: '填写已由 Syncthing、OneDrive 等同步的本地目录。',
+      mapTitle: '目录映射',
+      mapHint:
+        '一行一条，「远端前缀 => 本机前缀」。合并工作区登记时按前缀改写路径，本机就落到自己的目录；留空表示要求两端路径完全一致。',
+      mapPlaceholder: 'D:\\Data\\code => E:\\code',
       scopeTitle: '同步层级',
       scopeSessions: '仅会话历史',
       scopeSessionsHint: '会话日志 + 工作区登记。体积最小、最安全。',
@@ -186,6 +194,9 @@ window.__ModuleLoader__.load({
       '.dsy_hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin:0}',
       '.dsy_subtitle{margin:6px 0 0;font-size:14px;font-weight:600}',
       '.dsy_inline{display:flex;gap:8px}',
+      '.dsy_inlineTop{display:flex;gap:8px;align-items:flex-start}',
+      '.dsy_textarea{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:18px;min-height:46px;resize:vertical;flex:1;min-width:0;padding:6px 10px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
+      '.dsy_textarea:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.dsy_input{flex:1;min-width:0;font:inherit;font-size:12px;padding:5px 10px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
       '.dsy_input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.dsy_branch{flex:none;max-width:120px}',
@@ -413,6 +424,7 @@ window.__ModuleLoader__.load({
       const [restorePath, setRestorePath] = useState('')
       const [draft, setDraft] = useState({ kind: 'git', remote: '', branch: 'main', path: '' })
       const [minutesDraft, setMinutesDraft] = useState('15')
+      const [mapDraft, setMapDraft] = useState('')
       const hydrated = useRef(false)
 
       useEffect(() => {
@@ -424,6 +436,7 @@ window.__ModuleLoader__.load({
           branch: status.target.branch || 'main',
           path: status.target.kind === 'directory' && status.ready ? status.target.description : '',
         })
+        setMapDraft((status.pathMap || []).join('\n'))
       }, [status])
 
       const auto = (status && status.autoSync) || { mode: 'off', minutes: 15 }
@@ -679,6 +692,31 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('p', { className: 'dsy_hint' }, draft.kind === 'git' ? t('gitHint') : t('dirHint')),
+
+        h('h3', { className: 'dsy_subtitle' }, t('mapTitle')),
+        h('p', { className: 'dsy_hint' }, t('mapHint')),
+        h(
+          'div',
+          { className: 'dsy_inlineTop' },
+          h('textarea', {
+            className: 'dsy_textarea',
+            rows: 2,
+            spellCheck: false,
+            placeholder: t('mapPlaceholder'),
+            value: mapDraft,
+            onChange: (event) => setMapDraft(event.target.value),
+          }),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsy_btn',
+              disabled: disabled,
+              onClick: () => state.run('configure', { pathMap: mapDraft }, () => t('saved')),
+            },
+            busy === 'configure' ? t('working') : t('save'),
+          ),
+        ),
 
         h(
           'div',
