@@ -59,6 +59,11 @@ function statusText(status) {
   lines.push(`目标：${target.kind === 'git' ? 'Git 远端' : '共享目录'} ${target.description ?? '（未配置）'}`)
   if (target.branch) lines.push(`分支：${target.branch}`)
   lines.push(`层级：${status.scopeLabel ?? status.scope ?? '未知'}`)
+  if (status.workspaceFileSummary && status.scope !== 'sessions') {
+    lines.push(
+      `工作区文件：${status.workspaceFileSummary.enabled}/${status.workspaceFileSummary.total} 个工作区已启用`,
+    )
+  }
   lines.push(`自动同步：${AUTO_TEXT[auto.mode] ?? auto.mode}${auto.mode === 'off' ? '' : `（${auto.minutes} 分钟）`}`)
   lines.push(
     `本机：${local.sessions ?? 0} 个会话，${local.workspaceFiles ?? 0} 个工作区文件，共 ${local.bytesText ?? '0 B'}`,
@@ -192,6 +197,26 @@ export function apply(ctx, config) {
       }
     }
     if (Array.isArray(payload.ignore)) next.ignore = payload.ignore
+    if (payload.workspaceFiles && typeof payload.workspaceFiles === 'object') {
+      const currentFiles = next.workspaceFiles ?? current.workspaceFiles ?? {}
+      const include = { ...(currentFiles.include ?? {}) }
+      if (payload.workspaceFiles.include && typeof payload.workspaceFiles.include === 'object') {
+        for (const [id, value] of Object.entries(payload.workspaceFiles.include)) {
+          if (typeof value === 'boolean') include[id] = value
+        }
+      }
+      next.workspaceFiles = { ...currentFiles, include }
+      if (typeof payload.workspaceFiles.default === 'boolean') {
+        next.workspaceFiles.default = payload.workspaceFiles.default
+      }
+    }
+    if (typeof payload.workspaceId === 'string' && payload.workspaceId.length > 0) {
+      const currentFiles = next.workspaceFiles ?? current.workspaceFiles ?? {}
+      next.workspaceFiles = {
+        ...currentFiles,
+        include: { ...(currentFiles.include ?? {}), [payload.workspaceId]: payload.workspaceFileSync !== false },
+      }
+    }
     await writeAtomic(settingsFile, `${JSON.stringify(next, null, 2)}\n`)
     syncConfig()
     return engine.status()
@@ -319,6 +344,14 @@ export function apply(ctx, config) {
                 description: '自动同步：off 关闭；interval 每 N 分钟；idle 会话安静 N 分钟后；startup 启动时一次',
               },
               autoMinutes: { type: 'number', description: '自动同步的分钟数（1–1440，默认 15）' },
+              workspaceId: {
+                type: 'string',
+                description: '要单独开关文件同步的工作区 id（取自 sync_status 的 workspaces[].id）',
+              },
+              workspaceFileSync: {
+                type: 'boolean',
+                description: '配合 workspaceId：该工作区的目录文件是否参与同步',
+              },
             },
             required: [],
           },

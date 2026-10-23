@@ -19,6 +19,7 @@ DeepSeek Harness 插件：把**会话历史**、**工作区登记**（可选：*
 
 工作区文件规则：
 
+- **按工作区开关**：选 `workspace` / `full` 后，面板会列出全部工作区（标题、路径、文件数、体积），逐个开关。关闭的工作区**既不上传，也不会从远端拉回**；仓库里已有的文件保持原样，重新打开就恢复同步。
 - 工作区本身是 Git 仓库时用 `git ls-files --cached --others --exclude-standard`，**自动遵守 .gitignore**，不会带 `.git`。
 - 非 Git 目录退化为遍历 + 内置排除（`node_modules`、`.venv`、`__pycache__`、`dist`、`build`、`target`、`coverage` 等）。
 - 额外 `ignore` 规则（如 `*.log`、`tmp/`、`**/dist/**`），单文件上限默认 4 MB，文件数上限默认 20000。
@@ -76,7 +77,14 @@ DeepSeek Harness 插件：把**会话历史**、**工作区登记**（可选：*
       mode: idle
       minutes: 15
     ignore: ["*.log", "tmp/"]
+    # 工作区级开关：default 为未单独设置时的默认值
+    workspaceFiles:
+      default: true
+      include:
+        4f1fa8ac-0faa-4a9c-badf-c982770b9130: false
 ```
+
+模型侧也可以直接改：`sync_configure { workspaceId, workspaceFileSync }`。
 
 ## 仓库镜像布局
 

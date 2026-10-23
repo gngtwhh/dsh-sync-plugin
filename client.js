@@ -42,6 +42,13 @@ window.__ModuleLoader__.load({
         'Also copy files inside workspace folders (Git-aware: .gitignore is respected, node_modules and similar are skipped).',
       scopeFull: 'Everything',
       scopeFullHint: 'Adds uploaded attachments and settings.yaml on top of workspace files.',
+      wsFilesTitle: 'Workspace files',
+      wsFilesHint:
+        'Choose which workspace folders take part in file sync. A workspace switched off is neither uploaded nor pulled back.',
+      noWorkspaces: 'No workspaces are registered yet.',
+      missingDir: 'folder missing',
+      filesCount: '{files} files · {bytes}',
+      off: 'Off',
       autoTitle: 'Automatic sync',
       autoOff: 'Off',
       autoInterval: 'Every N minutes',
@@ -106,6 +113,12 @@ window.__ModuleLoader__.load({
       scopeWorkspaceHint: '再加上工作区目录里的文件；Git 仓库会遵守 .gitignore，并跳过 node_modules 等目录。',
       scopeFull: '全部',
       scopeFullHint: '在工作区文件基础上，再包含上传的附件与 settings.yaml。',
+      wsFilesTitle: '工作区文件',
+      wsFilesHint: '选择哪些工作区的目录文件参与同步；关闭的工作区既不上传，也不会从远端拉回。',
+      noWorkspaces: '还没有登记任何工作区。',
+      missingDir: '目录不存在',
+      filesCount: '{files} 个文件 · {bytes}',
+      off: '关闭',
       autoTitle: '自动同步',
       autoOff: '关闭',
       autoInterval: '每 N 分钟',
@@ -186,6 +199,18 @@ window.__ModuleLoader__.load({
       '.dsy_option:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       '.dsy_optionTitle{font-size:13px;line-height:20px;font-weight:600}',
       '.dsy_optionHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin-top:2px}',
+      '.dsy_wsrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:.5px solid var(--dsw-alias-border-l1)}',
+      '.dsy_wsrow:last-child{border-bottom:0}',
+      '.dsy_wsMain{flex:1;min-width:0}',
+      '.dsy_wsTitle{font-size:13px;line-height:20px;font-weight:500}',
+      '.dsy_wsPath{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsy_wsMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
+      '.dsy_switch{position:relative;flex:none;width:34px;height:20px;border-radius:10px;border:0;padding:0;background:var(--dsw-alias-border-l2);cursor:pointer;transition:background .12s}',
+      '.dsy_switch[data-on="true"]{background:var(--dsw-alias-brand-primary)}',
+      '.dsy_switch:disabled{opacity:.5;cursor:default}',
+      '.dsy_switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      '.dsy_switchKnob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-bg-base);transition:left .12s}',
+      '.dsy_switch[data-on="true"] .dsy_switchKnob{left:16px}',
       '.dsy_dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}',
       '.dsy_badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
       '.dsy_footer{display:flex;align-items:center;gap:8px;font:inherit;font-size:13px;line-height:20px;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;max-width:100%;text-align:left}',
@@ -407,6 +432,7 @@ window.__ModuleLoader__.load({
       }, [auto.minutes])
 
       const pending = status && status.pending && status.pending.known ? status.pending : null
+      const workspaces = (status && status.workspaces) || []
       const disabled = busy !== null
       const scope = (status && status.scope) || 'sessions'
 
@@ -487,6 +513,63 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
+
+        scope !== 'sessions'
+          ? h(
+              React.Fragment,
+              null,
+              h('h3', { className: 'dsy_subtitle' }, t('wsFilesTitle')),
+              h('p', { className: 'dsy_hint' }, t('wsFilesHint')),
+              workspaces.length === 0
+                ? h('p', { className: 'dsy_hint' }, t('noWorkspaces'))
+                : h(
+                    'div',
+                    { className: 'dsy_card' },
+                    workspaces.map((workspace) =>
+                      h(
+                        'div',
+                        { className: 'dsy_wsrow', key: workspace.id },
+                        h(
+                          'div',
+                          { className: 'dsy_wsMain' },
+                          h('div', { className: 'dsy_wsTitle' }, workspace.title),
+                          h(
+                            'div',
+                            { className: 'dsy_wsPath', title: workspace.path },
+                            workspace.path + (workspace.exists ? '' : ' · ' + t('missingDir')),
+                          ),
+                        ),
+                        h(
+                          'div',
+                          { className: 'dsy_wsMeta' },
+                          workspace.syncFiles
+                            ? format(t('filesCount'), { files: workspace.files, bytes: workspace.bytesText })
+                            : t('off'),
+                        ),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            role: 'switch',
+                            className: 'dsy_switch',
+                            'data-on': workspace.syncFiles ? 'true' : undefined,
+                            'aria-checked': workspace.syncFiles,
+                            'aria-label': workspace.title,
+                            disabled: disabled,
+                            onClick: () =>
+                              state.run(
+                                'configure',
+                                { workspaceFiles: { include: { [workspace.id]: !workspace.syncFiles } } },
+                                () => t('saved'),
+                              ),
+                          },
+                          h('span', { className: 'dsy_switchKnob' }),
+                        ),
+                      ),
+                    ),
+                  ),
+            )
+          : null,
 
         h('h3', { className: 'dsy_subtitle' }, t('autoTitle')),
         h(

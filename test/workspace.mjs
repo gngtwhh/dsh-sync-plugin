@@ -153,6 +153,77 @@ async function main() {
   const after = await engineA.activityFingerprint()
   check('会话写入改变指纹', before !== after, { before, after })
 
+  console.log('按工作区开关文件同步')
+  const shared2 = path.join(root, 'shared2')
+  const proj1 = path.join(root, 'p1')
+  const proj2 = path.join(root, 'p2')
+  await write(path.join(proj1, 'a.js'), 'export const a = 1\n')
+  await write(path.join(proj2, 'b.js'), 'export const b = 1\n')
+  const homeE = path.join(root, 'E', '.dsh')
+  await fs.mkdir(homeE, { recursive: true })
+  await write(
+    path.join(homeE, 'storages/workspace.json'),
+    JSON.stringify(
+      {
+        unit: { name: 'workspace', version: 2 },
+        global: { initialized: true, workspaceIds: ['w1', 'w2'], archivedSessionIds: [], pinnedSessionIds: [] },
+        tables: {
+          workspaces: {
+            w1: { path: proj1, title: 'p1', sessionIds: [], createdAt: 'x', updatedAt: 'x' },
+            w2: { path: proj2, title: 'p2', sessionIds: [], createdAt: 'x', updatedAt: 'x' },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  )
+  const engineE = new SyncEngine(
+    resolveConfig(
+      { name: 'ws2', target: { kind: 'directory', path: shared2 }, scope: 'workspace', workspaceFiles: { include: { w2: false } } },
+      { home: homeE, device: 'E' },
+    ),
+  )
+  await engineE.sync({ mode: 'push' })
+  check('启用的工作区被推送', await exists(path.join(shared2, 'workspaces/w1/a.js')))
+  check('关闭的工作区不推送', !(await exists(path.join(shared2, 'workspaces/w2/b.js'))))
+
+  const statusE = await engineE.status()
+  const w1State = statusE.workspaces.find((workspace) => workspace.id === 'w1')
+  const w2State = statusE.workspaces.find((workspace) => workspace.id === 'w2')
+  check('状态里标记 w1 开', w1State && w1State.syncFiles === true, w1State)
+  check('状态里标记 w2 关', w2State && w2State.syncFiles === false, w2State)
+  check('状态统计启用的工作区数量', statusE.workspaceFileSummary.enabled === 1 && statusE.workspaceFileSummary.total === 2, statusE.workspaceFileSummary)
+
+  const homeF = path.join(root, 'F', '.dsh')
+  await fs.mkdir(homeF, { recursive: true })
+  await write(
+    path.join(homeF, 'storages/workspace.json'),
+    JSON.stringify(
+      {
+        unit: { name: 'workspace', version: 2 },
+        global: { initialized: true, workspaceIds: ['w1', 'w2'], archivedSessionIds: [], pinnedSessionIds: [] },
+        tables: {
+          workspaces: {
+            w1: { path: proj1, title: 'p1', sessionIds: [], createdAt: 'x', updatedAt: 'x' },
+            w2: { path: proj2, title: 'p2', sessionIds: [], createdAt: 'x', updatedAt: 'x' },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  )
+  await fs.rm(path.join(proj1, 'a.js'), { force: true })
+  const engineF = new SyncEngine(
+    resolveConfig(
+      { name: 'ws2', target: { kind: 'directory', path: shared2 }, scope: 'workspace', workspaceFiles: { include: { w1: false } } },
+      { home: homeF, device: 'F' },
+    ),
+  )
+  await engineF.sync({ mode: 'pull' })
+  check('关闭的工作区不会被拉回本机', !(await exists(path.join(proj1, 'a.js'))))
+
   console.log(failures === 0 ? '\n全部通过' : `\n${failures} 个用例失败`)
   process.exitCode = failures === 0 ? 0 : 1
 }
