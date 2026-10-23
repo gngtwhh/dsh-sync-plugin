@@ -249,7 +249,9 @@ window.__ModuleLoader__.load({
 
     function format(template, values) {
       return String(template).replace(/\{(\w+)\}/g, function (match, key) {
-        return values[key] === undefined || values[key] === null ? match : String(values[key])
+        const value = values[key]
+        // null/undefined 也当成缺失，避免模板占位符原样漏到界面上
+        return value === undefined || value === null ? '?' : String(value)
       })
     }
 
@@ -738,8 +740,8 @@ window.__ModuleLoader__.load({
             { label: t('remote') },
             status && status.remote
               ? format(t('remoteLine'), {
-                  sessions: status.remote.sessions === undefined ? '?' : status.remote.sessions,
-                  files: status.remote.workspaceFiles === undefined ? '?' : status.remote.workspaceFiles,
+                  sessions: status.remote.sessions == null ? '?' : status.remote.sessions,
+                  files: status.remote.workspaceFiles == null ? '?' : status.remote.workspaceFiles,
                   bytes: status.remote.bytesText || '?',
                 }) + ' · ' + (fmtTime(status.remote.updatedAt) || '?')
               : t('never'),
