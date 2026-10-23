@@ -188,7 +188,7 @@ window.__ModuleLoader__.load({
       '.dsy_optionHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin-top:2px}',
       '.dsy_dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}',
       '.dsy_badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
-      '.dsy_footer{display:flex;align-items:center;gap:8px;font:inherit;font-size:13px;line-height:20px;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;width:100%;text-align:left}',
+      '.dsy_footer{display:flex;align-items:center;gap:8px;font:inherit;font-size:13px;line-height:20px;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;max-width:100%;text-align:left}',
       '.dsy_footer:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
       '.dsy_footer[data-wide="false"]{justify-content:center;padding:6px 0}',
       '.dsy_footer[data-active="true"]{color:var(--dsw-alias-label-primary)}',
