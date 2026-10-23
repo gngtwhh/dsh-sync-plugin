@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Sync & backup",
+    "description": "Back up workspace registrations and session logs to a Git remote or a shared folder, and merge them across devices."
+  }
+}

@@ -1,0 +1,11 @@
+# dsh-sync 插件：把工作区登记与会话日志备份/同步到 Git 远端或共享目录。
+# 首次安装后请按需补全 config（见 README 或 settings 页说明）。
+- insert:
+    - id: dsh-sync
+      name: '@local/dsh-sync'
+      config:
+        target:
+          kind: git
+          remote: ''
+          branch: main
+        autosyncMinutes: 0
